@@ -1,9 +1,11 @@
 package main
 
 import (
-	"fmt"
+	"chirpy/apiconfig"
+	"encoding/json"
+	"log"
 	"net/http"
-	"sync/atomic"
+	"strings"
 )
 
 func main() {
@@ -12,14 +14,15 @@ func main() {
 		Addr:    ":8080",
 		Handler: mux,
 	}
-	apicfg := apiconfig{}
-	mux.Handle("/app/", http.StripPrefix("/app", apicfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
+	apicfg := apiconfig.Config{}
+	mux.Handle("/app/", http.StripPrefix("/app", apicfg.MiddlewareMetricsInc(http.FileServer(http.Dir(".")))))
 
 	mux.HandleFunc("GET /api/healthz", readiness)
-	mux.HandleFunc("GET /admin/metrics", apicfg.requestToScreen)
-	mux.HandleFunc("POST /admin/reset", apicfg.resetHits)
-	server.ListenAndServe()
+	mux.HandleFunc("POST /api/validate_chirp", validation)
+	mux.HandleFunc("GET /admin/metrics", apicfg.RequestToScreen)
+	mux.HandleFunc("POST /admin/reset", apicfg.ResetHits)
 
+	server.ListenAndServe()
 }
 
 func readiness(w http.ResponseWriter, r *http.Request) {
@@ -28,26 +31,70 @@ func readiness(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
-func (cfg *apiconfig) requestToScreen(w http.ResponseWriter, r *http.Request) {
-	hits := fmt.Sprintf("<html>\n  <body>\n    <h1>Welcome, Chirpy Admin</h1>\n    <p>Chirpy has been visited %d times!</p>\n  </body>\n</html>", cfg.fileserverhits.Load())
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+func validation(w http.ResponseWriter, r *http.Request) {
+	type chirpy struct {
+		Body string `json:"body"`
+	}
+	type Invalid struct {
+		Error string `json:"error"`
+	}
+	type cleanedb struct {
+		CleanedBody string `json:"cleaned_body"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := chirpy{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		InvalidChirpy := Invalid{Error: "Error at decoding chirp"}
+		data, err := json.Marshal(InvalidChirpy)
+		if err != nil {
+			log.Printf("Error marshaling JSON: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		w.WriteHeader(400)
+		w.Write(data)
+		return
+	}
+	if len(params.Body) > 140 {
+		InvalidChirpy := Invalid{Error: "Chirp is longer than 140 characters"}
+		data, err := json.Marshal(InvalidChirpy)
+		if err != nil {
+			log.Printf("Error marshaling JSON at lenght Check: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+		w.WriteHeader(400)
+		w.Write(data)
+		return
+	}
+
+	filteredText := textFiltering(params.Body)
+	res := cleanedb{CleanedBody: filteredText}
+	data, err := json.Marshal(res)
+	if err != nil {
+		log.Printf("Error marshaling JSON at validated Check: %s", err)
+		w.WriteHeader(500)
+		return
+	}
 	w.WriteHeader(200)
-	w.Write([]byte(hits))
-	fmt.Printf("Hits: %d", cfg.fileserverhits.Load()) //debug for correct counting
+	w.Write(data)
+
 }
 
-func (cfg *apiconfig) resetHits(w http.ResponseWriter, r *http.Request) {
-	cfg.fileserverhits.Swap(0)
-}
-
-type apiconfig struct {
-	fileserverhits atomic.Int32
-}
-
-func (cfg *apiconfig) middlewareMetricsInc(next http.Handler) http.Handler {
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg.fileserverhits.Add(1)
-		next.ServeHTTP(w, r)
-	})
+func textFiltering(body string) string {
+	filteredWords := []string{"kerfuffle", "sharbert", "fornax"}
+	splited := strings.Split(body, " ")
+	var res []string
+	for _, w := range splited {
+		for _, p := range filteredWords {
+			if strings.ToLower(w) == p {
+				w = "****"
+			}
+		}
+		res = append(res, w)
+	}
+	ret := strings.Join(res, " ")
+	return ret
 }
