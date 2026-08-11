@@ -16,8 +16,8 @@ func main() {
 	mux.Handle("/app/", http.StripPrefix("/app", apicfg.middlewareMetricsInc(http.FileServer(http.Dir(".")))))
 
 	mux.HandleFunc("GET /api/healthz", readiness)
-	mux.HandleFunc("GET /api/metrics", apicfg.requestToScreen)
-	mux.HandleFunc("POST /api/reset", apicfg.resetHits)
+	mux.HandleFunc("GET /admin/metrics", apicfg.requestToScreen)
+	mux.HandleFunc("POST /admin/reset", apicfg.resetHits)
 	server.ListenAndServe()
 
 }
@@ -29,8 +29,8 @@ func readiness(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiconfig) requestToScreen(w http.ResponseWriter, r *http.Request) {
-	hits := fmt.Sprintf("Hits: %d", cfg.fileserverhits.Load())
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	hits := fmt.Sprintf("<html>\n  <body>\n    <h1>Welcome, Chirpy Admin</h1>\n    <p>Chirpy has been visited %d times!</p>\n  </body>\n</html>", cfg.fileserverhits.Load())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(200)
 	w.Write([]byte(hits))
 	fmt.Printf("Hits: %d", cfg.fileserverhits.Load()) //debug for correct counting
