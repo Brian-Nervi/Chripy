@@ -2,19 +2,34 @@ package main
 
 import (
 	"chirpy/apiconfig"
+	"chirpy/internal/database"
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	if dbURL == "" {
+		log.Fatal("DB_URL must be set")
+	}
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatalf("Error opening database: %s", err)
+	}
+	dbQueries := database.New(db)
 	mux := http.NewServeMux()
 	server := http.Server{
 		Addr:    ":8080",
 		Handler: mux,
 	}
-	apicfg := apiconfig.Config{}
+	apicfg := apiconfig.Config{Queries: dbQueries}
 	mux.Handle("/app/", http.StripPrefix("/app", apicfg.MiddlewareMetricsInc(http.FileServer(http.Dir(".")))))
 
 	mux.HandleFunc("GET /api/healthz", readiness)
@@ -22,7 +37,7 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apicfg.RequestToScreen)
 	mux.HandleFunc("POST /admin/reset", apicfg.ResetHits)
 
-	server.ListenAndServe()
+	log.Fatal(server.ListenAndServe())
 }
 
 func readiness(w http.ResponseWriter, r *http.Request) {

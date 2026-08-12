@@ -1,6 +1,7 @@
 package apiconfig
 
 import (
+	"chirpy/internal/database"
 	"fmt"
 	"net/http"
 	"sync/atomic"
@@ -8,6 +9,7 @@ import (
 
 type Config struct {
 	fileserverhits atomic.Int32
+	Queries        *database.Queries
 }
 
 func (cfg *Config) RequestToScreen(w http.ResponseWriter, r *http.Request) {
