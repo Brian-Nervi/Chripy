@@ -26,13 +26,17 @@ func main() {
 	if platform == "" {
 		log.Fatal("No platform provided")
 	}
+	secret := os.Getenv("SECRET")
+	if platform == "" {
+		log.Fatal("No secret provided")
+	}
 	dbQueries := database.New(db)
 	mux := http.NewServeMux()
 	server := http.Server{
 		Addr:    ":8080",
 		Handler: mux,
 	}
-	apicfg := apiconfig.Config{Queries: dbQueries, Platform: platform}
+	apicfg := apiconfig.Config{Queries: dbQueries, Platform: platform, Secret: secret}
 	mux.Handle("/app/", http.StripPrefix("/app", apicfg.MiddlewareMetricsInc(http.FileServer(http.Dir(".")))))
 
 	mux.HandleFunc("GET /api/healthz", readiness)
@@ -42,7 +46,9 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apicfg.ResetHits)
 	mux.HandleFunc("GET /api/chirps", apicfg.GetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apicfg.GetChirpById)
-
+	mux.HandleFunc("POST /api/login", apicfg.Login)
+	mux.HandleFunc("POST /api/refresh", apicfg.RefreshTokenToAccessToken)
+	mux.HandleFunc("POST /api/revoke", apicfg.Revoke)
 	log.Fatal(server.ListenAndServe())
 }
 

@@ -1,6 +1,7 @@
 package apiconfig
 
 import (
+	"chirpy/internal/auth"
 	"chirpy/internal/database"
 	"encoding/json"
 	"errors"
@@ -18,13 +19,17 @@ type Config struct {
 	fileserverhits atomic.Int32
 	Queries        *database.Queries
 	Platform       string
+	Secret         string
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID             uuid.UUID `json:"id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Email          string    `json:"email"`
+	HashedPassword string    `json:"-"`
+	Token          string    `json:"token"`
+	RefreshToken   string    `json:"refresh_token"`
 }
 
 func (cfg *Config) RequestToScreen(w http.ResponseWriter, r *http.Request) {
@@ -56,19 +61,28 @@ func (cfg *Config) MiddlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *Config) CreateUser(w http.ResponseWriter, r *http.Request) {
-	type email struct {
-		Email string `json:"email"`
+	type register struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	decoder := json.NewDecoder(r.Body)
-	params := email{}
+	params := register{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(400)
+		fmt.Printf("Error:%v", err)
 		return
 	}
-	user, err := cfg.Queries.CreateUser(r.Context(), params.Email)
+	hashedPassword, err := auth.HashPassword(params.Password)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	user, err := cfg.Queries.CreateUser(r.Context(), database.CreateUserParams{Email: params.Email, HashedPassword: hashedPassword})
+	if err != nil {
+		w.WriteHeader(400)
+		fmt.Printf("Error:%v", err)
 		return
 	}
 	res := User{
@@ -79,7 +93,8 @@ func (cfg *Config) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := json.Marshal(res)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
 		return
 	}
 	w.WriteHeader(201)
@@ -92,18 +107,35 @@ func (cfg *Config) SendChirp(w http.ResponseWriter, r *http.Request) {
 	params := chirpy{}
 	err := decoder.Decode(&params)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Printf("Error:%v", err)
 		return
 	}
+	//
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	validatedUser, err := auth.ValidateJWT(token, cfg.Secret)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	//
 	filteredmsg, err := validationAndFiltering(params.Body)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Printf("Error:%v", err)
 		return
 	}
 	params.Body = filteredmsg
-	msg, err := cfg.Queries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: params.UserID})
+	msg, err := cfg.Queries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: validatedUser})
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Printf("Error:%v", err)
 		return
 	}
 	res := responseJSON{
@@ -113,12 +145,14 @@ func (cfg *Config) SendChirp(w http.ResponseWriter, r *http.Request) {
 		Body:      msg.Body,
 		UserID:    msg.UserID,
 	}
+
 	data, err := json.Marshal(res)
 	if err != nil {
-		log.Fatal(err)
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Printf("Error:%v", err)
 		return
 	}
-	w.WriteHeader(201)
+	w.WriteHeader(http.StatusCreated)
 	w.Write(data)
 
 }
@@ -129,6 +163,7 @@ type responseJSON struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Body      string    `json:"body"`
 	UserID    uuid.UUID `json:"user_id"`
+	Token     string    `json:"token"`
 }
 
 type chirpy struct {
@@ -163,7 +198,7 @@ func textFiltering(body string) string {
 func (cfg *Config) GetChirps(w http.ResponseWriter, r *http.Request) {
 	Chirps, err := cfg.Queries.GetAllChirps(r.Context())
 	if err != nil {
-		w.WriteHeader(400)
+		w.WriteHeader(500)
 		w.Write([]byte("Failed getting Chirp"))
 	}
 	var ret []responseJSON
@@ -179,8 +214,8 @@ func (cfg *Config) GetChirps(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := json.Marshal(ret)
 	if err != nil {
-		w.WriteHeader(400)
-		log.Fatal(err)
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
 		return
 	}
 	w.WriteHeader(200)
@@ -210,9 +245,137 @@ func (cfg *Config) GetChirpById(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := json.Marshal(res)
 	if err != nil {
+		w.WriteHeader(500)
 		fmt.Printf("Error:%v", err)
 		return
 	}
 	w.WriteHeader(200)
 	w.Write(data)
+}
+
+func (cfg *Config) Login(w http.ResponseWriter, r *http.Request) {
+	type register struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := register{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		w.WriteHeader(400)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	user, err := cfg.Queries.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		w.WriteHeader(401)
+		w.Write([]byte("Unauthorized"))
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	check, err := auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	if !check {
+		w.WriteHeader(401)
+		w.Write([]byte("Unauthorized"))
+		return
+	}
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	sixtydays := time.Now().Add(60 * 24 * time.Hour)
+	_, err = cfg.Queries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{Token: refreshToken, UserID: user.ID, ExpiresAt: sixtydays})
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	token, err := auth.MakeJWT(user.ID, cfg.Secret, time.Hour)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+
+	res := User{
+		ID:           user.ID,
+		CreatedAt:    user.CreatedAt,
+		UpdatedAt:    user.UpdatedAt,
+		Email:        user.Email,
+		Token:        token,
+		RefreshToken: refreshToken,
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+	w.Write(data)
+}
+
+func (cfg *Config) RefreshTokenToAccessToken(w http.ResponseWriter, r *http.Request) {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		w.WriteHeader(401)
+		return
+	}
+	cutToken, foundBearer := strings.CutPrefix(token, "Bearer ")
+	if !foundBearer {
+		w.WriteHeader(401)
+		return
+	}
+	userID, err := cfg.Queries.GetUserFromRefreshToken(r.Context(), cutToken)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	accessToken, err := auth.MakeJWT(userID, cfg.Secret, time.Hour)
+	if err != nil {
+		w.WriteHeader(500)
+		return
+	}
+	res := responseJSON{
+		Token: accessToken,
+	}
+
+	data, err := json.Marshal(res)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(200)
+	w.Write(data)
+
+}
+
+func (cfg *Config) Revoke(w http.ResponseWriter, r *http.Request) {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		w.WriteHeader(401)
+		return
+	}
+	cutToken, foundBearer := strings.CutPrefix(token, "Bearer ")
+	if !foundBearer {
+		w.WriteHeader(401)
+		return
+	}
+	err := cfg.Queries.RevokeRefreshToken(r.Context(), cutToken)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	w.WriteHeader(204)
 }
