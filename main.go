@@ -27,8 +27,12 @@ func main() {
 		log.Fatal("No platform provided")
 	}
 	secret := os.Getenv("SECRET")
-	if platform == "" {
+	if secret == "" {
 		log.Fatal("No secret provided")
+	}
+	polkaKey := os.Getenv("POLKA_KEY")
+	if polkaKey == "" {
+		log.Fatal("No polka api provided")
 	}
 	dbQueries := database.New(db)
 	mux := http.NewServeMux()
@@ -36,7 +40,7 @@ func main() {
 		Addr:    ":8080",
 		Handler: mux,
 	}
-	apicfg := apiconfig.Config{Queries: dbQueries, Platform: platform, Secret: secret}
+	apicfg := apiconfig.Config{Queries: dbQueries, Platform: platform, Secret: secret, PolkaKey: polkaKey}
 	mux.Handle("/app/", http.StripPrefix("/app", apicfg.MiddlewareMetricsInc(http.FileServer(http.Dir(".")))))
 
 	mux.HandleFunc("GET /api/healthz", readiness)
@@ -51,7 +55,7 @@ func main() {
 	mux.HandleFunc("POST /api/login", apicfg.Login)
 	mux.HandleFunc("POST /api/refresh", apicfg.RefreshTokenToAccessToken)
 	mux.HandleFunc("POST /api/revoke", apicfg.Revoke)
-
+	mux.HandleFunc("POST /api/polka/webhooks", apicfg.UpgradeToRed)
 	log.Fatal(server.ListenAndServe())
 }
 

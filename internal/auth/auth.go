@@ -20,6 +20,17 @@ func HashPassword(password string) (string, error) {
 	}
 	return hash, nil
 }
+func getTokenFromHeader(r *http.Request) (string, error) {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return "", fmt.Errorf("No token on header")
+	}
+	cutToken, foundBearer := strings.CutPrefix(token, "Bearer ")
+	if !foundBearer {
+		return "", fmt.Errorf("No prefix on header")
+	}
+	return cutToken, nil
+}
 
 func CheckPasswordHash(password string, hash string) (bool, error) {
 	check, err := argon2id.ComparePasswordAndHash(password, hash)
@@ -87,4 +98,18 @@ func MakeRefreshToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(randomnum), nil
+}
+
+func GetAPIKey(headers http.Header) (string, error) {
+	apikey := headers.Get("Authorization")
+	if apikey == "" {
+		fmt.Println(apikey)
+		return "", fmt.Errorf("No apikey on header")
+	}
+	cutApiKey, foundBearer := strings.CutPrefix(apikey, "ApiKey ")
+	if !foundBearer {
+		fmt.Println(apikey)
+		return "", fmt.Errorf("No prefix on header")
+	}
+	return cutApiKey, nil
 }

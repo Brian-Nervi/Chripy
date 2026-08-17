@@ -20,6 +20,7 @@ type Config struct {
 	Queries        *database.Queries
 	Platform       string
 	Secret         string
+	PolkaKey       string
 }
 
 type User struct {
@@ -30,6 +31,7 @@ type User struct {
 	HashedPassword string    `json:"-"`
 	Token          string    `json:"token"`
 	RefreshToken   string    `json:"refresh_token"`
+	IsChirpyRed    bool      `json:"is_chirpy_red"`
 }
 
 func (cfg *Config) RequestToScreen(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +311,7 @@ func (cfg *Config) Login(w http.ResponseWriter, r *http.Request) {
 		Email:        user.Email,
 		Token:        token,
 		RefreshToken: refreshToken,
+		IsChirpyRed:  user.IsChirpyRed,
 	}
 	data, err := json.Marshal(res)
 	if err != nil {
@@ -476,4 +479,53 @@ func (cfg *Config) DeleteChirp(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(204)
 
+}
+
+func (cfg *Config) UpgradeToRed(w http.ResponseWriter, r *http.Request) {
+	type Data struct {
+		UserID string `json:"user_id"`
+	}
+
+	type toRed struct {
+		Event string `json:"event"`
+		Data  Data   `json:"data"`
+	}
+
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		w.WriteHeader(401)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	if apiKey != cfg.PolkaKey {
+		w.WriteHeader(401)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := toRed{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		w.WriteHeader(400)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	if params.Event != "user.upgraded" {
+		w.WriteHeader(204)
+		return
+	}
+	id, err := uuid.Parse(params.Data.UserID)
+	if err != nil {
+		w.WriteHeader(400)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	err = cfg.Queries.UpgradeToRed(r.Context(), id)
+	if err != nil {
+		w.WriteHeader(404)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	w.WriteHeader(204)
 }
