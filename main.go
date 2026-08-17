@@ -41,14 +41,17 @@ func main() {
 
 	mux.HandleFunc("GET /api/healthz", readiness)
 	mux.HandleFunc("POST /api/users", apicfg.CreateUser)
-	mux.HandleFunc("POST /api/chirps", apicfg.SendChirp)
+	mux.HandleFunc("PUT /api/users", apicfg.UpdateEmailAndPassword)
 	mux.HandleFunc("GET /admin/metrics", apicfg.RequestToScreen)
 	mux.HandleFunc("POST /admin/reset", apicfg.ResetHits)
+	mux.HandleFunc("POST /api/chirps", apicfg.SendChirp)
 	mux.HandleFunc("GET /api/chirps", apicfg.GetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apicfg.GetChirpById)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.DeleteChirp)
 	mux.HandleFunc("POST /api/login", apicfg.Login)
 	mux.HandleFunc("POST /api/refresh", apicfg.RefreshTokenToAccessToken)
 	mux.HandleFunc("POST /api/revoke", apicfg.Revoke)
+
 	log.Fatal(server.ListenAndServe())
 }
 

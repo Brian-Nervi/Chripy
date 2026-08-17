@@ -111,7 +111,6 @@ func (cfg *Config) SendChirp(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Error:%v", err)
 		return
 	}
-	//
 	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -124,7 +123,6 @@ func (cfg *Config) SendChirp(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("Error:%v", err)
 		return
 	}
-	//
 	filteredmsg, err := validationAndFiltering(params.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -324,17 +322,12 @@ func (cfg *Config) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *Config) RefreshTokenToAccessToken(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("Authorization")
-	if token == "" {
+	token, err := getTokenFromHeader(r)
+	if err != nil {
 		w.WriteHeader(401)
 		return
 	}
-	cutToken, foundBearer := strings.CutPrefix(token, "Bearer ")
-	if !foundBearer {
-		w.WriteHeader(401)
-		return
-	}
-	userID, err := cfg.Queries.GetUserFromRefreshToken(r.Context(), cutToken)
+	userID, err := cfg.Queries.GetUserFromRefreshToken(r.Context(), token)
 	if err != nil {
 		w.WriteHeader(401)
 		return
@@ -361,21 +354,126 @@ func (cfg *Config) RefreshTokenToAccessToken(w http.ResponseWriter, r *http.Requ
 }
 
 func (cfg *Config) Revoke(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("Authorization")
-	if token == "" {
+	token, err := getTokenFromHeader(r)
+	if err != nil {
 		w.WriteHeader(401)
 		return
 	}
-	cutToken, foundBearer := strings.CutPrefix(token, "Bearer ")
-	if !foundBearer {
-		w.WriteHeader(401)
-		return
-	}
-	err := cfg.Queries.RevokeRefreshToken(r.Context(), cutToken)
+	err = cfg.Queries.RevokeRefreshToken(r.Context(), token)
 	if err != nil {
 		w.WriteHeader(500)
 		fmt.Printf("Error:%v", err)
 		return
 	}
 	w.WriteHeader(204)
+}
+
+func getTokenFromHeader(r *http.Request) (string, error) {
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		return "", fmt.Errorf("No token on header")
+	}
+	cutToken, foundBearer := strings.CutPrefix(token, "Bearer ")
+	if !foundBearer {
+		return "", fmt.Errorf("No prefix on header")
+	}
+	return cutToken, nil
+}
+
+func (cfg *Config) UpdateEmailAndPassword(w http.ResponseWriter, r *http.Request) {
+	token, err := getTokenFromHeader(r)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	validatedUserId, err := auth.ValidateJWT(token, cfg.Secret)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+
+	type toUpdate struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := toUpdate{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		w.WriteHeader(400)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		w.WriteHeader(400)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	err = cfg.Queries.UpdateEmailAndPassword(r.Context(), database.UpdateEmailAndPasswordParams{Email: params.Email, HashedPassword: hashedPassword, ID: validatedUserId})
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	user, err := cfg.Queries.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		w.WriteHeader(400)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+
+	res := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+
+	data, err := json.Marshal(res)
+	if err != nil {
+		w.WriteHeader(500)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	w.WriteHeader(200)
+	w.Write(data)
+}
+
+func (cfg *Config) DeleteChirp(w http.ResponseWriter, r *http.Request) {
+	token, err := getTokenFromHeader(r)
+	if err != nil {
+		w.WriteHeader(401)
+		return
+	}
+	validatedUserId, err := auth.ValidateJWT(token, cfg.Secret)
+	if err != nil {
+		w.WriteHeader(403)
+		return
+	}
+	id := r.PathValue("chirpID")
+	parsedid, err := uuid.Parse(id)
+	if err != nil {
+		w.WriteHeader(404)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	chirp, err := cfg.Queries.GetChirpByID(r.Context(), parsedid) //maybe this is wrong and validation occurs con validatedjWT
+	if err != nil {
+		w.WriteHeader(404)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	if chirp.UserID != validatedUserId {
+		w.WriteHeader(403)
+		return
+	}
+	err = cfg.Queries.DeleteChirpByID(r.Context(), parsedid)
+	if err != nil {
+		w.WriteHeader(404)
+		fmt.Printf("Error:%v", err)
+		return
+	}
+	w.WriteHeader(204)
+
 }
