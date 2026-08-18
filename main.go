@@ -49,7 +49,7 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apicfg.RequestToScreen)
 	mux.HandleFunc("POST /admin/reset", apicfg.ResetHits)
 	mux.HandleFunc("POST /api/chirps", apicfg.SendChirp)
-	mux.HandleFunc("GET /api/chirps", apicfg.GetChirps)
+	mux.HandleFunc("GET /api/chirps/", apicfg.GetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apicfg.GetChirpById)
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apicfg.DeleteChirp)
 	mux.HandleFunc("POST /api/login", apicfg.Login)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -196,13 +197,31 @@ func textFiltering(body string) string {
 }
 
 func (cfg *Config) GetChirps(w http.ResponseWriter, r *http.Request) {
-	Chirps, err := cfg.Queries.GetAllChirps(r.Context())
+	var chirps []database.Chirp
+	var err error
+	var parsedId uuid.UUID
+	s := r.URL.Query().Get("author_id")
+
+	if s != "" {
+		parsedId, err = uuid.Parse(s)
+		if err != nil {
+			w.WriteHeader(500)
+			return
+		}
+		chirps, err = cfg.Queries.GetAllChirpsByID(r.Context(), parsedId)
+	} else {
+		chirps, err = cfg.Queries.GetAllChirps(r.Context())
+	}
 	if err != nil {
 		w.WriteHeader(500)
 		w.Write([]byte("Failed getting Chirp"))
 	}
+	a := r.URL.Query().Get("sort")
+	if a == "desc" {
+		sort.Slice(chirps, func(i, j int) bool { return chirps[i].CreatedAt.After(chirps[j].CreatedAt) })
+	}
 	var ret []responseJSON
-	for _, c := range Chirps {
+	for _, c := range chirps {
 		res := responseJSON{
 			ID:        c.ID,
 			CreatedAt: c.CreatedAt,
@@ -212,6 +231,7 @@ func (cfg *Config) GetChirps(w http.ResponseWriter, r *http.Request) {
 		}
 		ret = append(ret, res)
 	}
+
 	data, err := json.Marshal(ret)
 	if err != nil {
 		w.WriteHeader(500)
